@@ -1,0 +1,11 @@
+This is a test document for the RAG Knowledge-Base Chatbot.
+
+Key topics covered:
+- Artificial Intelligence and Machine Learning
+- Retrieval-Augmented Generation (RAG)
+- Vector databases and embeddings
+- Large Language Models (LLMs)
+
+RAG systems work by first retrieving relevant document chunks from a vector store,
+then using those chunks as context for the language model to generate grounded answers.
+This approach reduces hallucinations and keeps answers factual.
