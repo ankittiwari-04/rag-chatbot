@@ -43,8 +43,22 @@ export async function ingestFiles(filePaths: string[]): Promise<IngestStats> {
     const text = await extractText(filePath);
     const fileName = path.basename(filePath);
     const chunks = await splitter.createDocuments([text], [{ source: fileName }]);
-    chunks.forEach((chunk, idx) => { chunk.metadata = { ...chunk.metadata, chunkIndex: idx }; });
+    
+    chunks.forEach((chunk, idx) => {
+      // Only keep ChromaDB-safe metadata: string, number, boolean, or null
+      chunk.metadata = {
+        source: String(fileName),
+        chunk_index: idx,                          // number ✅
+        ingested_at: new Date().toISOString(),     // string ✅
+      };
+    });
+
     allDocs.push(...chunks);
+  }
+
+  if (allDocs.length === 0) {
+    console.log('No chunks created — files may be empty.');
+    return { filesProcessed: filePaths.length, chunksCreated: 0, elapsedMs: Date.now() - start };
   }
 
   // Generate embeddings via Ollama
@@ -53,18 +67,36 @@ export async function ingestFiles(filePaths: string[]): Promise<IngestStats> {
     model: config.EMBED_MODEL,
   });
 
+  console.log(`Embedding ${allDocs.length} chunks with ${config.EMBED_MODEL}...`);
   const texts = allDocs.map((d) => d.pageContent);
   const embeddings = await embedder.embedDocuments(texts);
 
-  // Upsert into ChromaDB using native client (supports v2 API with tenants)
+  // Upsert into ChromaDB using native client (v2 compatible)
   const client = new ChromaClient({ path: config.CHROMA_URL });
+
   const collection = await client.getOrCreateCollection({
     name: config.COLLECTION_NAME,
     metadata: { 'hnsw:space': 'cosine' },
   });
 
   const ids = allDocs.map((_, i) => `doc-${Date.now()}-${i}`);
-  const metadatas = allDocs.map((d) => d.metadata as Record<string, string | number | boolean>);
+
+  // Sanitize all metadata values to be ChromaDB-safe
+  const metadatas = allDocs.map((d) => {
+    const safe: Record<string, string | number | boolean> = {};
+    for (const [key, val] of Object.entries(d.metadata)) {
+      if (
+        typeof val === 'string' ||
+        typeof val === 'number' ||
+        typeof val === 'boolean'
+      ) {
+        safe[key] = val;
+      } else if (val !== null && val !== undefined) {
+        safe[key] = String(val); // convert anything else to string
+      }
+    }
+    return safe;
+  });
 
   await collection.upsert({ ids, embeddings, documents: texts, metadatas });
 
@@ -79,13 +111,19 @@ export async function ingestFiles(filePaths: string[]): Promise<IngestStats> {
 
 async function main(): Promise<void> {
   const docsDir = path.join(process.cwd(), 'docs');
-  if (!fs.existsSync(docsDir)) { console.error(`docs/ not found at ${docsDir}`); process.exit(1); }
+  if (!fs.existsSync(docsDir)) {
+    console.error(`docs/ not found at ${docsDir}`);
+    process.exit(1);
+  }
 
   const files = fs.readdirSync(docsDir)
     .filter((f) => ['.txt', '.md', '.pdf'].includes(path.extname(f).toLowerCase()))
     .map((f) => path.join(docsDir, f));
 
-  if (files.length === 0) { console.log('No supported files found in docs/'); process.exit(0); }
+  if (files.length === 0) {
+    console.log('No supported files found in docs/');
+    process.exit(0);
+  }
 
   console.log(`Ingesting ${files.length} file(s)...`);
   const stats = await ingestFiles(files);
@@ -93,5 +131,8 @@ async function main(): Promise<void> {
 }
 
 if (require.main === module) {
-  main().catch((err) => { console.error('Ingestion failed:', err); process.exit(1); });
+  main().catch((err) => {
+    console.error('Ingestion failed:', err);
+    process.exit(1);
+  });
 }

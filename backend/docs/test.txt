@@ -1,0 +1,1 @@
+Artificial Intelligence is transforming the world. Machine learning enables computers to learn from data. RAG combines search with language models to give accurate answers. Natural Language Processing allows computers to understand human language. Deep learning uses neural networks. 
