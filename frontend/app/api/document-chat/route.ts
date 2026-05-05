@@ -98,10 +98,10 @@ export async function POST(request: NextRequest) {
     const modelName = process.env['GEMINI_MODEL'] ?? 'gemini-1.5-flash';
 
     if (!apiKey) {
-      return NextResponse.json(
-        { success: false, error: 'Cloud Gemini API key is not configured.' },
-        { status: 503 },
-      );
+      return NextResponse.json({
+        success: false,
+        error: 'Cloud Gemini API key is not configured.',
+      });
     }
 
     const body = (await request.json()) as {
@@ -181,12 +181,9 @@ User question: ${question}`;
       },
     });
   } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Document chat failed.',
-      },
-      { status: 500 },
-    );
+    return NextResponse.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Document chat failed.',
+    });
   }
 }
