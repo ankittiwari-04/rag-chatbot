@@ -7,7 +7,10 @@ import type {
   ApiSuccess,
 } from '@/types';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
+const CONFIGURED_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.trim() ?? '';
+const HOSTED_BACKEND_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_HOSTED_BACKEND === 'true' && CONFIGURED_BASE_URL.length > 0;
+const BASE_URL = HOSTED_BACKEND_ENABLED ? CONFIGURED_BASE_URL : '';
 const DEMO_DOCS_KEY = 'rag_demo_documents';
 const DEMO_HISTORY_PREFIX = 'rag_demo_history_';
 const BACKEND_PROBE_TTL_MS = 30_000;
@@ -102,6 +105,11 @@ function shouldFallback(error: unknown): boolean {
 }
 
 async function isBackendAvailable(): Promise<boolean> {
+  if (!HOSTED_BACKEND_ENABLED) {
+    backendProbe = { ok: false, checkedAt: Date.now() };
+    return false;
+  }
+
   const now = Date.now();
   if (backendProbe && now - backendProbe.checkedAt < BACKEND_PROBE_TTL_MS) {
     return backendProbe.ok;
@@ -731,6 +739,21 @@ export async function clearKnowledgeBase(): Promise<void> {
 }
 
 export async function getHealth(): Promise<HealthResponse> {
+  if (!HOSTED_BACKEND_ENABLED) {
+    backendProbe = { ok: false, checkedAt: Date.now() };
+    return {
+      status: 'demo',
+      uptime: 0,
+      services: {
+        llm: 'Vercel Gemini route with browser fallback',
+        embeddings: 'Browser PDF text extraction',
+        vectorDb: 'localStorage',
+      },
+      collection: 'browser-cloud-chat',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   try {
     const { data } = await apiClient.get<ApiSuccess<HealthResponse>>('/health', {
       timeout: 2_500,
@@ -744,11 +767,11 @@ export async function getHealth(): Promise<HealthResponse> {
       status: 'demo',
       uptime: 0,
       services: {
-        llm: 'Browser fallback',
-        embeddings: 'Keyword matching',
+        llm: 'Vercel Gemini route with browser fallback',
+        embeddings: 'Browser PDF text extraction',
         vectorDb: 'localStorage',
       },
-      collection: 'browser-demo',
+      collection: 'browser-cloud-chat',
       timestamp: new Date().toISOString(),
     };
   }

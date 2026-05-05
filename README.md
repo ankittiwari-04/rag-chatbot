@@ -76,7 +76,7 @@ GEMINI_API_KEY=your_gemini_api_key
 NEXT_PUBLIC_API_URL=http://localhost:3001/api
 ```
 
-`GEMINI_API_KEY` is used only by the Next.js server route. It is never exposed to the browser. `NEXT_PUBLIC_API_URL` is optional for the hosted Express backend; when it is unavailable, the live demo still answers from uploaded document text through the Vercel route and browser fallback.
+`GEMINI_API_KEY` is used only by the Next.js server route. It is never exposed to the browser. `NEXT_PUBLIC_API_URL` is optional for the hosted Express backend. To enable that separate backend in the browser, also set `NEXT_PUBLIC_ENABLE_HOSTED_BACKEND=true`; otherwise the live demo answers from uploaded document text through the Vercel route and browser fallback.
 
 ### 4. Run locally
 
@@ -121,6 +121,7 @@ GEMINI_API_KEY=...
 
 ```env
 NEXT_PUBLIC_API_URL=https://your-render-backend.onrender.com/api
+NEXT_PUBLIC_ENABLE_HOSTED_BACKEND=true
 ```
 
 ### Backend on Render
