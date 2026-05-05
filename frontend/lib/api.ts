@@ -130,6 +130,22 @@ function chunkText(content: string, size = 900): string[] {
   return chunks;
 }
 
+function isGenericDocumentQuestion(question: string): boolean {
+  const normalized = question.toLowerCase();
+  return [
+    'inside',
+    'about',
+    'summar',
+    'overview',
+    'explain',
+    'document',
+    'resume',
+    'cv',
+    'tell me',
+    'what is this',
+  ].some((phrase) => normalized.includes(phrase));
+}
+
 function randomId(): string {
   return crypto.randomUUID();
 }
@@ -138,18 +154,21 @@ function createDemoAnswer(question: string, sessionId: string): ChatResponse {
   const start = Date.now();
   const docs = readDocs();
   const queryWords = new Set(tokenize(question));
+  const useOverview = isGenericDocumentQuestion(question);
 
-  if (docs.length === 0) {
+  const docsWithContent = docs.filter((doc) => doc.content.trim().length > 0);
+
+  if (docsWithContent.length === 0) {
     return {
       answer:
-        'No documents are available yet. Upload a TXT or Markdown file, then ask a question about it. The hosted backend will be used automatically when it is online.',
+        'No readable document text is available yet. Upload a PDF, TXT, or Markdown file, then ask a question about it. The hosted backend will be used automatically when it is online.',
       sources: [],
       latencyMs: Date.now() - start,
       sessionId,
     };
   }
 
-  const ranked = docs
+  const ranked = docsWithContent
     .flatMap((doc) =>
       chunkText(doc.content).map((chunk) => {
         const chunkWords = tokenize(chunk);
@@ -161,14 +180,15 @@ function createDemoAnswer(question: string, sessionId: string): ChatResponse {
         };
       }),
     )
-    .filter((item) => item.score > 0)
+    .filter((item) => useOverview || item.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, 4);
 
   if (ranked.length === 0) {
+    const availableFiles = docsWithContent.map((doc) => doc.name).join(', ');
     return {
       answer:
-        'I could not find matching context in the uploaded documents. Try using terms that appear in the file, or upload a more relevant document.',
+        `I could not find matching context in the uploaded documents (${availableFiles}). Try asking with names, skills, dates, sections, or keywords that appear in the file.`,
       sources: [],
       latencyMs: Date.now() - start,
       sessionId,
@@ -179,9 +199,12 @@ function createDemoAnswer(question: string, sessionId: string): ChatResponse {
   const sourceList = ranked
     .map((item, index) => `${index + 1}. ${item.doc.name}: ${item.chunk.slice(0, 240).trim()}`)
     .join('\n\n');
+  const intro = useOverview
+    ? `Here is what I found inside ${best.doc.name}:`
+    : `Based on ${best.doc.name}, the most relevant context I found is:`;
 
   return {
-    answer: `Based on ${best.doc.name}, the most relevant context I found is:\n\n${best.chunk
+    answer: `${intro}\n\n${best.chunk
       .slice(0, 700)
       .trim()}\n\nRelevant source excerpts:\n\n${sourceList}`,
     sources: ranked.map((item) => ({
@@ -194,9 +217,37 @@ function createDemoAnswer(question: string, sessionId: string): ChatResponse {
   };
 }
 
+async function extractPdfText(file: File): Promise<string> {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/legacy/build/pdf.worker.mjs`;
+  const data = new Uint8Array(await file.arrayBuffer());
+  const loadTask = pdfjs.getDocument({ data });
+  const pdf = await loadTask.promise;
+  const pages: string[] = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items
+      .map((item) => ('str' in item ? item.str : ''))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (pageText) pages.push(pageText);
+  }
+
+  const text = pages.join('\n\n').trim();
+  if (!text) {
+    throw new Error(`Could not extract readable text from ${file.name}.`);
+  }
+
+  return text;
+}
+
 async function readUploadFile(file: File): Promise<string> {
   if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-    return `PDF file "${file.name}" was uploaded. The browser demo keeps this upload visible, while full PDF text extraction is handled by the backend service when it is online.`;
+    return extractPdfText(file);
   }
 
   return file.text();

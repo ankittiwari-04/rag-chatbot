@@ -19,6 +19,7 @@
     "framer-motion": "^11.11.11",
     "lucide-react": "^0.462.0",
     "next": "^16.2.4",
+    "pdfjs-dist": "^5.7.284",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-dropzone": "^14.3.4",
