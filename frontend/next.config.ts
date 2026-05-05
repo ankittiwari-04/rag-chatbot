@@ -2,9 +2,7 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  turbopack: {
-    root: __dirname,
-  },
+  ...(process.env['VERCEL'] ? {} : { turbopack: { root: __dirname } }),
   // Allow images from any HTTPS source for document previews
   images: {
     remotePatterns: [
