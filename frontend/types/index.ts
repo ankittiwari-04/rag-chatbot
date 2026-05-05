@@ -46,9 +46,10 @@ export interface UploadResponse {
 export interface HealthResponse {
   status: string;
   uptime: number;
-  models: {
+  services: {
     llm: string;
     embeddings: string;
+    vectorDb: string;
   };
   collection: string;
   timestamp: string;

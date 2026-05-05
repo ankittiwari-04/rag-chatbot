@@ -126,7 +126,7 @@ export default function FileUploader({ onUploadComplete }: FileUploaderProps) {
               {isDragActive ? 'Drop files here' : 'Drag & drop files'}
             </p>
             <p className="text-xs mt-0.5" style={{ color: '#525252' }}>
-              PDF, TXT, MD — up to 5 files, 10 MB each
+              PDF, TXT, MD - up to 5 files, 10 MB each
             </p>
           </div>
 

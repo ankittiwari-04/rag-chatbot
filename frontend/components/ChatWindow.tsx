@@ -177,7 +177,7 @@ export default function ChatWindow({
                   className="text-xs px-1.5 py-0.5 rounded-full font-medium"
                   style={{ background: 'rgba(99,102,241,0.12)', color: '#6366f1' }}
                 >
-                  llama3
+                  Gemini
                 </span>
                 {latency !== null && (
                   <span className="text-xs" style={{ color: '#525252' }}>
@@ -283,7 +283,7 @@ export default function ChatWindow({
               color: '#fca5a5',
             }}
           >
-            ⚠️ {error}
+            Warning: {error}
           </motion.div>
         )}
 
@@ -324,7 +324,7 @@ export default function ChatWindow({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask a question about your documents… (Enter to send, Shift+Enter for newline)"
+            placeholder="Ask a question about your documents... (Enter to send, Shift+Enter for newline)"
             disabled={isLoading}
             rows={1}
             className="flex-1 bg-transparent resize-none outline-none text-sm leading-relaxed placeholder-[#525252] disabled:opacity-50"

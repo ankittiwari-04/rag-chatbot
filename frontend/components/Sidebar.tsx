@@ -157,7 +157,7 @@ export default function Sidebar({
                   className="text-xs font-medium px-2 py-0.5 rounded-full"
                   style={{ background: 'rgba(99,102,241,0.12)', color: '#6366f1' }}
                 >
-                  llama3
+                  Gemini
                 </span>
               </div>
               {docCount !== null && (
@@ -179,7 +179,7 @@ export default function Sidebar({
                   style={{ color: '#525252' }}
                   title={sessionId}
                 >
-                  {sessionId.slice(0, 8)}…
+                  {sessionId.slice(0, 8)}...
                 </span>
               </div>
             </div>
@@ -228,7 +228,7 @@ export default function Sidebar({
                     className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-60"
                     style={{ background: '#ef4444', color: 'white' }}
                   >
-                    {isClearing ? 'Clearing…' : 'Yes, Clear'}
+                    {isClearing ? 'Clearing...' : 'Yes, Clear'}
                   </button>
                   <button
                     onClick={() => { setShowConfirm(false); setClearError(null); }}
@@ -244,7 +244,7 @@ export default function Sidebar({
           </div>
         </div>
 
-        {/* Footer — New Chat */}
+        {/* Footer - New Chat */}
         <div className="p-4" style={{ borderTop: '1px solid #1a1a1a' }}>
           <button
             onClick={onNewChat}
