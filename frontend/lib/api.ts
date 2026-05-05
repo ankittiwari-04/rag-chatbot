@@ -150,6 +150,12 @@ function getQuestionIntent(question: string): string {
   if (/\b(job\s*roles?|roles?|target|apply|career|position|positions|suitable|fit)\b/.test(normalized)) {
     return 'career';
   }
+  if (/\b(introduction|introduce|interview intro|pitch|profile summary|about me)\b/.test(normalized)) {
+    return 'intro';
+  }
+  if (/\b(impact|measurable|metric|metrics|result|results|reduced|increased|improved|percent|percentage|business value|outcome)\b/.test(normalized)) {
+    return 'impact';
+  }
   if (/\b(skill|skills|tech stack|technology|technologies|tools?)\b/.test(normalized)) {
     return 'skills';
   }
@@ -184,6 +190,8 @@ function getIntentTerms(intent: string): string[] {
     contact: ['email', 'phone', 'linkedin', 'github', 'contact', 'address'],
     identity: ['name', 'candidate', 'profile', 'resume'],
     career: ['skill', 'skills', 'project', 'projects', 'experience', 'developer', 'engineer', 'role', 'job'],
+    intro: ['name', 'profile', 'skills', 'experience', 'project', 'education', 'developer', 'engineer'],
+    impact: ['impact', 'metric', 'metrics', 'result', 'reduced', 'increased', 'improved', 'percent', 'percentage', 'time', 'reporting', 'business'],
     overview: [],
     specific: [],
   };
@@ -198,13 +206,16 @@ function scoreText(text: string, queryWords: Set<string>, intent: string): numbe
   const intentTerms = new Set(getIntentTerms(intent));
   const queryMatches = words.filter((word) => queryWords.has(word)).length;
   const intentMatches = words.filter((word) => intentTerms.has(word)).length;
+  const numberBoost = /\d|percent|percentage|reduced|increased|improved|saved|faster|slower/i.test(text)
+    ? 3
+    : 0;
   const headingBoost = getIntentTerms(intent).some((term) =>
     text.toLowerCase().includes(`${term}:`),
   )
     ? 2
     : 0;
 
-  return queryMatches * 2 + intentMatches * 3 + headingBoost;
+  return queryMatches * 2 + intentMatches * 3 + headingBoost + (intent === 'impact' ? numberBoost : 0);
 }
 
 function rankContexts(docs: DemoDocument[], question: string, intent: string): RankedContext[] {
@@ -219,9 +230,21 @@ function rankContexts(docs: DemoDocument[], question: string, intent: string): R
     }));
   });
 
-  return ranked
+  const matches = ranked
     .filter((item) => intent === 'overview' || item.score > 0)
     .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+
+  if (matches.length > 0) return matches;
+
+  return docs
+    .flatMap((doc) =>
+      chunkText(doc.content, 700).slice(0, 3).map((chunk, index) => ({
+        doc,
+        chunk,
+        score: index === 0 ? 0.2 : 0.1,
+      })),
+    )
     .slice(0, 5);
 }
 
@@ -308,6 +331,57 @@ function createCareerAdvice(docs: DemoDocument[], ranked: RankedContext[]): stri
   return `Based on the uploaded document, you should target these roles:\n\n${roleLines}\n\nBest first targets: **Full Stack Developer**, **Frontend React Developer**, and **Junior Software Engineer**. If you want to highlight the RAG/chatbot project strongly, also apply for **AI Application Developer** or **LLM/RAG Developer** internships and junior roles.\n\nEvidence from the document:\n${evidence}`;
 }
 
+function createIntroAnswer(docs: DemoDocument[], ranked: RankedContext[]): string {
+  const fullText = docs.map((doc) => doc.content).join(' ');
+  const nameMatch = fullText.match(/\b(?:Name:\s*)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/);
+  const name = nameMatch?.[1] ?? 'This candidate';
+  const evidence = ranked
+    .slice(0, 4)
+    .map((item) => item.chunk)
+    .join(' ');
+
+  const skillHints = [
+    'React',
+    'Next.js',
+    'Node.js',
+    'TypeScript',
+    'Python',
+    'FastAPI',
+    'LangChain',
+    'Gemini',
+    'vector search',
+    'PostgreSQL',
+    'Docker',
+  ].filter((skill) => fullText.toLowerCase().includes(skill.toLowerCase()));
+  const focus = /healthcare/i.test(fullText)
+    ? 'healthcare analytics and AI document automation'
+    : /rag|document|langchain|gemini|vector/i.test(fullText)
+      ? 'AI document applications and RAG-based systems'
+      : 'software development';
+
+  return `Based on the document, a short interview introduction could be:\n\n\"Hi, I am ${name}, a software developer focused on ${focus}. I have worked with ${skillHints.slice(0, 6).join(', ') || 'modern software technologies'}, and the document highlights experience with ${evidence.slice(0, 260).trim()}. I am interested in roles where I can build practical, user-focused software and apply these skills to real business problems.\"`;
+}
+
+function createFallbackAnswer(question: string, intent: string, ranked: RankedContext[]): string {
+  if (intent === 'overview') {
+    return ranked[0].chunk.slice(0, 900).trim();
+  }
+
+  const hasStrongMatch = ranked.some((item) => item.score >= 1);
+  const evidence = createBulletList(ranked);
+  const normalizedQuestion = question.trim().replace(/\s+/g, ' ');
+
+  if (!hasStrongMatch) {
+    return `I could not find an exact answer to "${normalizedQuestion}" in the uploaded document. The closest relevant information I found is:\n\n${evidence}\n\nIf you want, ask about a specific name, skill, project, education detail, contact detail, date, result, or role mentioned in the PDF.`;
+  }
+
+  if (intent === 'impact') {
+    return `The measurable impact or result mentioned in the document is:\n\n${evidence}`;
+  }
+
+  return evidence;
+}
+
 function randomId(): string {
   return crypto.randomUUID();
 }
@@ -349,9 +423,11 @@ function createDemoAnswer(question: string, sessionId: string): ChatResponse {
   const answerBody =
     intent === 'career'
       ? createCareerAdvice(docsWithContent, ranked)
+      : intent === 'intro'
+      ? createIntroAnswer(docsWithContent, ranked)
       : intent === 'overview'
-      ? best.chunk.slice(0, 900).trim()
-      : createBulletList(ranked);
+      ? createFallbackAnswer(question, intent, ranked)
+      : createFallbackAnswer(question, intent, ranked);
   const intro =
     intent === 'career'
       ? ''
@@ -407,8 +483,51 @@ async function readUploadFile(file: File): Promise<string> {
   return file.text();
 }
 
+async function askDocumentApi(
+  question: string,
+  sessionId: string,
+  docs: DemoDocument[],
+): Promise<ChatResponse | null> {
+  try {
+    const startedAt = Date.now();
+    const response = await fetch('/api/document-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question,
+        documents: docs.map((doc) => ({
+          file: doc.name,
+          content: doc.content.slice(0, 60_000),
+        })),
+      }),
+    });
+
+    if (!response.ok) return null;
+
+    const payload = (await response.json()) as {
+      success: boolean;
+      data?: {
+        answer: string;
+        sources: ChatResponse['sources'];
+      };
+    };
+
+    if (!payload.success || !payload.data?.answer) return null;
+
+    return {
+      answer: payload.data.answer,
+      sources: payload.data.sources ?? [],
+      latencyMs: Date.now() - startedAt,
+      sessionId,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function demoSendMessage(question: string, sessionId: string): Promise<ChatResponse> {
-  const response = createDemoAnswer(question, sessionId);
+  const docs = readDocs().filter((doc) => doc.content.trim().length > 0);
+  const response = (await askDocumentApi(question, sessionId, docs)) ?? createDemoAnswer(question, sessionId);
   const history = readDemoHistory(sessionId);
 
   writeDemoHistory(sessionId, [
