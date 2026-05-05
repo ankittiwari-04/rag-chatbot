@@ -147,6 +147,9 @@ function chunkText(content: string, size = 900): string[] {
 function getQuestionIntent(question: string): string {
   const normalized = question.toLowerCase();
 
+  if (/\b(job\s*roles?|roles?|target|apply|career|position|positions|suitable|fit)\b/.test(normalized)) {
+    return 'career';
+  }
   if (/\b(skill|skills|tech stack|technology|technologies|tools?)\b/.test(normalized)) {
     return 'skills';
   }
@@ -180,6 +183,7 @@ function getIntentTerms(intent: string): string[] {
     education: ['education', 'degree', 'college', 'university', 'school', 'cgpa', 'gpa', 'course'],
     contact: ['email', 'phone', 'linkedin', 'github', 'contact', 'address'],
     identity: ['name', 'candidate', 'profile', 'resume'],
+    career: ['skill', 'skills', 'project', 'projects', 'experience', 'developer', 'engineer', 'role', 'job'],
     overview: [],
     specific: [],
   };
@@ -227,6 +231,83 @@ function createBulletList(items: RankedContext[]): string {
     .join('\n');
 }
 
+function hasAny(text: string, terms: string[]): boolean {
+  const normalized = text.toLowerCase();
+  return terms.some((term) => normalized.includes(term));
+}
+
+function createCareerAdvice(docs: DemoDocument[], ranked: RankedContext[]): string {
+  const fullText = docs.map((doc) => doc.content).join('\n').toLowerCase();
+  const roles: Array<{ title: string; reason: string }> = [];
+
+  if (hasAny(fullText, ['react', 'next.js', 'nextjs', 'html5', 'css3', 'tailwind'])) {
+    roles.push({
+      title: 'Frontend Developer / React Developer',
+      reason: 'the document mentions React, Next.js, HTML/CSS, and frontend-oriented UI skills.',
+    });
+  }
+
+  if (hasAny(fullText, ['node.js', 'nodejs', 'express', 'api', 'rest'])) {
+    roles.push({
+      title: 'Backend Developer - Node.js',
+      reason: 'the document includes Node.js, Express, and API/backend skills.',
+    });
+  }
+
+  if (
+    hasAny(fullText, ['react', 'next.js', 'nextjs']) &&
+    hasAny(fullText, ['node.js', 'nodejs', 'express', 'mongodb', 'postgresql', 'mysql'])
+  ) {
+    roles.push({
+      title: 'Full Stack Developer / MERN Stack Developer',
+      reason: 'the profile combines frontend skills with backend and database experience.',
+    });
+  }
+
+  if (hasAny(fullText, ['rag', 'langchain', 'vector', 'embedding', 'qdrant', 'chromadb', 'ollama', 'gemini'])) {
+    roles.push({
+      title: 'AI Application Developer / RAG Chatbot Developer',
+      reason: 'the document mentions RAG pipelines, vector embeddings, LangChain, Gemini/Ollama, or vector databases.',
+    });
+  }
+
+  if (hasAny(fullText, ['typescript', 'javascript']) && hasAny(fullText, ['git', 'github', 'docker', 'postman'])) {
+    roles.push({
+      title: 'Junior Software Engineer',
+      reason: 'the document shows programming fundamentals plus common engineering tools.',
+    });
+  }
+
+  const uniqueRoles = roles.filter(
+    (role, index, list) => list.findIndex((item) => item.title === role.title) === index,
+  );
+  const recommendedRoles = uniqueRoles.length > 0
+    ? uniqueRoles
+    : [
+        {
+          title: 'Entry-Level Software Developer',
+          reason: 'the document contains software development education, skills, or projects.',
+        },
+      ];
+
+  const roleLines = recommendedRoles
+    .slice(0, 5)
+    .map((role, index) => `${index + 1}. **${role.title}** - ${role.reason}`)
+    .join('\n');
+
+  const evidence = ranked.length > 0
+    ? ranked
+        .slice(0, 3)
+        .map((item) => `- ${item.chunk.slice(0, 260).trim()} (${item.doc.name})`)
+        .join('\n')
+    : docs
+        .slice(0, 2)
+        .map((doc) => `- ${doc.content.slice(0, 260).trim()} (${doc.name})`)
+        .join('\n');
+
+  return `Based on the uploaded document, you should target these roles:\n\n${roleLines}\n\nBest first targets: **Full Stack Developer**, **Frontend React Developer**, and **Junior Software Engineer**. If you want to highlight the RAG/chatbot project strongly, also apply for **AI Application Developer** or **LLM/RAG Developer** internships and junior roles.\n\nEvidence from the document:\n${evidence}`;
+}
+
 function randomId(): string {
   return crypto.randomUUID();
 }
@@ -266,16 +347,20 @@ function createDemoAnswer(question: string, sessionId: string): ChatResponse {
     .map((item, index) => `${index + 1}. ${item.doc.name}: ${item.chunk.slice(0, 240).trim()}`)
     .join('\n\n');
   const answerBody =
-    intent === 'overview'
+    intent === 'career'
+      ? createCareerAdvice(docsWithContent, ranked)
+      : intent === 'overview'
       ? best.chunk.slice(0, 900).trim()
       : createBulletList(ranked);
   const intro =
-    intent === 'overview'
+    intent === 'career'
+      ? ''
+      : intent === 'overview'
       ? `Here is a concise overview of ${best.doc.name}:`
       : `Here is what I found for your question about ${intent === 'specific' ? 'the document' : intent}:`;
 
   return {
-    answer: `${intro}\n\n${answerBody}\n\nRelevant source excerpts:\n\n${sourceList}`,
+    answer: `${intro ? `${intro}\n\n` : ''}${answerBody}\n\nRelevant source excerpts:\n\n${sourceList}`,
     sources: ranked.map((item) => ({
       file: item.doc.name,
       score: intent === 'overview' ? 1 : Math.min(1, item.score / 10),
