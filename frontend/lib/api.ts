@@ -42,6 +42,12 @@ interface DemoDocument {
   uploadedAt: string;
 }
 
+interface RankedContext {
+  doc: DemoDocument;
+  chunk: string;
+  score: number;
+}
+
 function hasStorage(): boolean {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 }
@@ -119,6 +125,14 @@ function tokenize(text: string): string[] {
     .filter((word) => word.length > 2);
 }
 
+function sentenceSplit(content: string): string[] {
+  return content
+    .replace(/\r/g, '\n')
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((sentence) => sentence.replace(/\s+/g, ' ').trim())
+    .filter((sentence) => sentence.length > 20);
+}
+
 function chunkText(content: string, size = 900): string[] {
   const clean = content.replace(/\s+/g, ' ').trim();
   if (!clean) return [];
@@ -130,20 +144,87 @@ function chunkText(content: string, size = 900): string[] {
   return chunks;
 }
 
-function isGenericDocumentQuestion(question: string): boolean {
+function getQuestionIntent(question: string): string {
   const normalized = question.toLowerCase();
-  return [
-    'inside',
-    'about',
-    'summar',
-    'overview',
-    'explain',
-    'document',
-    'resume',
-    'cv',
-    'tell me',
-    'what is this',
-  ].some((phrase) => normalized.includes(phrase));
+
+  if (/\b(skill|skills|tech stack|technology|technologies|tools?)\b/.test(normalized)) {
+    return 'skills';
+  }
+  if (/\b(project|projects|portfolio|built|created|developed)\b/.test(normalized)) {
+    return 'projects';
+  }
+  if (/\b(experience|work|job|role|company|employment)\b/.test(normalized)) {
+    return 'experience';
+  }
+  if (/\b(education|degree|college|university|school|cgpa|gpa)\b/.test(normalized)) {
+    return 'education';
+  }
+  if (/\b(contact|email|phone|linkedin|github|address)\b/.test(normalized)) {
+    return 'contact';
+  }
+  if (/\b(name|who is|candidate|person)\b/.test(normalized)) {
+    return 'identity';
+  }
+  if (/\b(summary|summar|overview|inside|about|explain|document|resume|cv|tell me|what is this)\b/.test(normalized)) {
+    return 'overview';
+  }
+
+  return 'specific';
+}
+
+function getIntentTerms(intent: string): string[] {
+  const terms: Record<string, string[]> = {
+    skills: ['skill', 'skills', 'technology', 'technologies', 'tools', 'stack', 'programming', 'framework'],
+    projects: ['project', 'projects', 'built', 'created', 'developed', 'application', 'app', 'system'],
+    experience: ['experience', 'work', 'job', 'role', 'company', 'intern', 'employment', 'responsibilities'],
+    education: ['education', 'degree', 'college', 'university', 'school', 'cgpa', 'gpa', 'course'],
+    contact: ['email', 'phone', 'linkedin', 'github', 'contact', 'address'],
+    identity: ['name', 'candidate', 'profile', 'resume'],
+    overview: [],
+    specific: [],
+  };
+
+  return terms[intent] ?? [];
+}
+
+function scoreText(text: string, queryWords: Set<string>, intent: string): number {
+  const words = tokenize(text);
+  if (words.length === 0) return 0;
+
+  const intentTerms = new Set(getIntentTerms(intent));
+  const queryMatches = words.filter((word) => queryWords.has(word)).length;
+  const intentMatches = words.filter((word) => intentTerms.has(word)).length;
+  const headingBoost = getIntentTerms(intent).some((term) =>
+    text.toLowerCase().includes(`${term}:`),
+  )
+    ? 2
+    : 0;
+
+  return queryMatches * 2 + intentMatches * 3 + headingBoost;
+}
+
+function rankContexts(docs: DemoDocument[], question: string, intent: string): RankedContext[] {
+  const queryWords = new Set(tokenize(question));
+  const useSentenceMode = intent !== 'overview';
+  const ranked = docs.flatMap((doc) => {
+    const units = useSentenceMode ? sentenceSplit(doc.content) : chunkText(doc.content);
+    return units.map((chunk) => ({
+      doc,
+      chunk,
+      score: scoreText(chunk, queryWords, intent),
+    }));
+  });
+
+  return ranked
+    .filter((item) => intent === 'overview' || item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+}
+
+function createBulletList(items: RankedContext[]): string {
+  return items
+    .map((item) => `- ${item.chunk.slice(0, 360).trim()} (${item.doc.name})`)
+    .join('\n');
 }
 
 function randomId(): string {
@@ -153,8 +234,7 @@ function randomId(): string {
 function createDemoAnswer(question: string, sessionId: string): ChatResponse {
   const start = Date.now();
   const docs = readDocs();
-  const queryWords = new Set(tokenize(question));
-  const useOverview = isGenericDocumentQuestion(question);
+  const intent = getQuestionIntent(question);
 
   const docsWithContent = docs.filter((doc) => doc.content.trim().length > 0);
 
@@ -168,21 +248,7 @@ function createDemoAnswer(question: string, sessionId: string): ChatResponse {
     };
   }
 
-  const ranked = docsWithContent
-    .flatMap((doc) =>
-      chunkText(doc.content).map((chunk) => {
-        const chunkWords = tokenize(chunk);
-        const matches = chunkWords.filter((word) => queryWords.has(word)).length;
-        return {
-          doc,
-          chunk,
-          score: chunkWords.length === 0 ? 0 : matches / Math.max(queryWords.size, 1),
-        };
-      }),
-    )
-    .filter((item) => useOverview || item.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 4);
+  const ranked = rankContexts(docsWithContent, question, intent);
 
   if (ranked.length === 0) {
     const availableFiles = docsWithContent.map((doc) => doc.name).join(', ');
@@ -199,17 +265,20 @@ function createDemoAnswer(question: string, sessionId: string): ChatResponse {
   const sourceList = ranked
     .map((item, index) => `${index + 1}. ${item.doc.name}: ${item.chunk.slice(0, 240).trim()}`)
     .join('\n\n');
-  const intro = useOverview
-    ? `Here is what I found inside ${best.doc.name}:`
-    : `Based on ${best.doc.name}, the most relevant context I found is:`;
+  const answerBody =
+    intent === 'overview'
+      ? best.chunk.slice(0, 900).trim()
+      : createBulletList(ranked);
+  const intro =
+    intent === 'overview'
+      ? `Here is a concise overview of ${best.doc.name}:`
+      : `Here is what I found for your question about ${intent === 'specific' ? 'the document' : intent}:`;
 
   return {
-    answer: `${intro}\n\n${best.chunk
-      .slice(0, 700)
-      .trim()}\n\nRelevant source excerpts:\n\n${sourceList}`,
+    answer: `${intro}\n\n${answerBody}\n\nRelevant source excerpts:\n\n${sourceList}`,
     sources: ranked.map((item) => ({
       file: item.doc.name,
-      score: Math.min(1, item.score),
+      score: intent === 'overview' ? 1 : Math.min(1, item.score / 10),
       excerpt: item.chunk.slice(0, 300).trim(),
     })),
     latencyMs: Date.now() - start,
@@ -288,7 +357,7 @@ async function demoUploadFiles(files: File[]): Promise<UploadResponse> {
     })),
   );
 
-  writeDocs([...readDocs(), ...docs]);
+  writeDocs(docs);
 
   return {
     message: `Stored ${docs.length} file(s) in browser demo mode.`,
