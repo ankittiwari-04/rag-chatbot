@@ -1,7 +1,8 @@
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
-import { OllamaEmbeddings } from '@langchain/ollama';
+import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
 import { Document } from '@langchain/core/documents';
-import { ChromaClient } from 'chromadb';
+import { QdrantClient } from '@qdrant/js-client-rest';
+import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
 // pdf-parse does not export types cleanly; using require for compatibility
@@ -30,6 +31,19 @@ async function extractText(filePath: string): Promise<string> {
   throw new Error(`Unsupported file type: ${ext}`);
 }
 
+// ─── Ensure Qdrant collection exists ─────────────────────────────────────────
+
+async function ensureCollection(client: QdrantClient): Promise<void> {
+  try {
+    await client.getCollection(config.QDRANT_COLLECTION);
+  } catch {
+    // Collection doesn't exist — create it (768 dims for text-embedding-004)
+    await client.createCollection(config.QDRANT_COLLECTION, {
+      vectors: { size: 768, distance: 'Cosine' },
+    });
+  }
+}
+
 // ─── Core ingestion pipeline ──────────────────────────────────────────────────
 
 export async function ingestFiles(filePaths: string[]): Promise<IngestStats> {
@@ -43,13 +57,12 @@ export async function ingestFiles(filePaths: string[]): Promise<IngestStats> {
     const text = await extractText(filePath);
     const fileName = path.basename(filePath);
     const chunks = await splitter.createDocuments([text], [{ source: fileName }]);
-    
+
     chunks.forEach((chunk, idx) => {
-      // Only keep ChromaDB-safe metadata: string, number, boolean, or null
       chunk.metadata = {
         source: String(fileName),
-        chunk_index: idx,                          // number ✅
-        ingested_at: new Date().toISOString(),     // string ✅
+        chunk_index: idx,
+        ingested_at: new Date().toISOString(),
       };
     });
 
@@ -61,44 +74,42 @@ export async function ingestFiles(filePaths: string[]): Promise<IngestStats> {
     return { filesProcessed: filePaths.length, chunksCreated: 0, elapsedMs: Date.now() - start };
   }
 
-  // Generate embeddings via Ollama
-  const embedder = new OllamaEmbeddings({
-    baseUrl: config.OLLAMA_BASE_URL,
-    model: config.EMBED_MODEL,
+  // Generate embeddings via Google Gemini text-embedding-004
+  const embedder = new GoogleGenerativeAIEmbeddings({
+    apiKey: config.GEMINI_API_KEY,
+    model: 'text-embedding-004',
   });
 
-  console.log(`Embedding ${allDocs.length} chunks with ${config.EMBED_MODEL}...`);
+  console.log(`Embedding ${allDocs.length} chunks with text-embedding-004...`);
   const texts = allDocs.map((d) => d.pageContent);
   const embeddings = await embedder.embedDocuments(texts);
 
-  // Upsert into ChromaDB using native client (v2 compatible)
-  const client = new ChromaClient({ path: config.CHROMA_URL });
-
-  const collection = await client.getOrCreateCollection({
-    name: config.COLLECTION_NAME,
-    metadata: { 'hnsw:space': 'cosine' },
+  // Upsert into Qdrant Cloud
+  const client = new QdrantClient({
+    url: config.QDRANT_URL,
+    apiKey: config.QDRANT_API_KEY,
   });
 
-  const ids = allDocs.map((_, i) => `doc-${Date.now()}-${i}`);
+  await ensureCollection(client);
 
-  // Sanitize all metadata values to be ChromaDB-safe
-  const metadatas = allDocs.map((d) => {
-    const safe: Record<string, string | number | boolean> = {};
-    for (const [key, val] of Object.entries(d.metadata)) {
-      if (
-        typeof val === 'string' ||
-        typeof val === 'number' ||
-        typeof val === 'boolean'
-      ) {
-        safe[key] = val;
-      } else if (val !== null && val !== undefined) {
-        safe[key] = String(val); // convert anything else to string
-      }
-    }
-    return safe;
-  });
+  // Qdrant points must have UUID or uint64 IDs
+  const points = allDocs.map((doc, i) => ({
+    id: uuidv4(),
+    vector: embeddings[i],
+    payload: {
+      content: doc.pageContent,
+      source: String(doc.metadata['source'] ?? 'unknown'),
+      chunk_index: Number(doc.metadata['chunk_index'] ?? i),
+      ingested_at: String(doc.metadata['ingested_at'] ?? new Date().toISOString()),
+    },
+  }));
 
-  await collection.upsert({ ids, embeddings, documents: texts, metadatas });
+  // Upsert in batches of 100 to avoid request size limits
+  const BATCH_SIZE = 100;
+  for (let i = 0; i < points.length; i += BATCH_SIZE) {
+    const batch = points.slice(i, i + BATCH_SIZE);
+    await client.upsert(config.QDRANT_COLLECTION, { wait: true, points: batch });
+  }
 
   return {
     filesProcessed: filePaths.length,

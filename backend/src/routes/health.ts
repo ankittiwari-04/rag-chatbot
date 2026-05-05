@@ -9,11 +9,12 @@ router.get('/', async (_req: Request, res: Response) => {
     data: {
       status: 'ok',
       uptime: process.uptime(),
-      models: {
-        llm: config.LLM_MODEL,
-        embeddings: config.EMBED_MODEL,
+      services: {
+        llm: 'Google Gemini 1.5 Flash',
+        embeddings: 'Google text-embedding-004',
+        vectorDb: 'Qdrant Cloud',
       },
-      collection: config.COLLECTION_NAME,
+      collection: config.QDRANT_COLLECTION,
       timestamp: new Date().toISOString(),
     },
   });

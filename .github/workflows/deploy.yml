@@ -68,6 +68,8 @@ jobs:
       run:
         working-directory: frontend
     env:
+      # Set this secret in GitHub: Settings → Secrets → NEXT_PUBLIC_API_URL
+      # Value should be: https://your-backend.onrender.com/api
       NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
     steps:
       - uses: actions/checkout@v4
@@ -79,32 +81,10 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-  # ─── Deploy to Railway (backend) ──────────────────────────────────────────
-  deploy-railway:
-    name: Deploy to Railway
-    runs-on: ubuntu-latest
-    needs: [build-backend, build-frontend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: Trigger Railway deploy
-        run: |
-          curl -sX POST "${{ secrets.RAILWAY_WEBHOOK }}" \
-            -H "Content-Type: application/json" \
-            --fail
-        env:
-          RAILWAY_WEBHOOK: ${{ secrets.RAILWAY_WEBHOOK }}
-
-  # ─── Deploy to Vercel (frontend) ──────────────────────────────────────────
-  deploy-vercel:
-    name: Deploy to Vercel
-    runs-on: ubuntu-latest
-    needs: [build-backend, build-frontend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: Trigger Vercel deploy
-        run: |
-          curl -sX POST "${{ secrets.VERCEL_WEBHOOK }}" \
-            -H "Content-Type: application/json" \
-            --fail
-        env:
-          VERCEL_WEBHOOK: ${{ secrets.VERCEL_WEBHOOK }}
+  # ─── Deploy notes ─────────────────────────────────────────────────────────
+  # Backend → Render.com auto-deploys on push to main via GitHub integration
+  #           (set up at https://dashboard.render.com → Connect GitHub repo)
+  #
+  # Frontend → Vercel auto-deploys on push to main via GitHub integration
+  #            (set up at https://vercel.com → Import Git Repository)
+  #            Remember to set NEXT_PUBLIC_API_URL in Vercel dashboard too!

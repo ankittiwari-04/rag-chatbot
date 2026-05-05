@@ -84,8 +84,9 @@ app.use((err: ApiError, _req: Request, res: Response, _next: NextFunction) => {
 const server = app.listen(config.PORT, () => {
   logger.info(`🚀 RAG Chatbot backend running on port ${config.PORT}`);
   logger.info(`   CORS origin: ${config.FRONTEND_URL}`);
-  logger.info(`   Ollama: ${config.OLLAMA_BASE_URL} (LLM: ${config.LLM_MODEL})`);
-  logger.info(`   ChromaDB: ${config.CHROMA_URL} (collection: ${config.COLLECTION_NAME})`);
+  logger.info(`   LLM: Google Gemini 1.5 Flash`);
+  logger.info(`   Embeddings: Google text-embedding-004`);
+  logger.info(`   Vector DB: Qdrant @ ${config.QDRANT_URL} (collection: ${config.QDRANT_COLLECTION})`);
 });
 
 // ─── Graceful shutdown ────────────────────────────────────────────────────────

@@ -1,0 +1,35 @@
+# render.yaml — Render.com deployment manifest for the backend
+# Docs: https://render.com/docs/blueprint-spec
+#
+# HOW TO DEPLOY:
+#  1. Go to https://dashboard.render.com
+#  2. Click "New +" → "Blueprint"
+#  3. Connect your GitHub repo (ankittiwari-04/rag-chatbot)
+#  4. Render will auto-detect this file and create the service
+#  5. Set the secret env vars in the Render dashboard:
+#       GEMINI_API_KEY, QDRANT_URL, QDRANT_API_KEY
+
+services:
+  - type: web
+    name: rag-chatbot-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: QDRANT_COLLECTION
+        value: rag-knowledge-base
+      - key: MAX_FILE_SIZE_MB
+        value: "10"
+      - key: FRONTEND_URL
+        value: https://rag-chatbot-ten-delta.vercel.app
+      # ── Set these secret values in the Render dashboard ──
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false

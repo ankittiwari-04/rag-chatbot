@@ -1,5 +1,5 @@
-import { OllamaEmbeddings } from '@langchain/ollama';
-import { ChromaClient } from 'chromadb';
+import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
+import { QdrantClient } from '@qdrant/js-client-rest';
 import { config } from './config';
 
 export interface RetrievedChunk {
@@ -9,15 +9,31 @@ export interface RetrievedChunk {
   chunkIndex: number;
 }
 
-// ─── Native ChromaDB client (supports v2 tenant API) ─────────────────────────
+// ─── Qdrant client singleton ──────────────────────────────────────────────────
 
-let chromaClient: ChromaClient | null = null;
+let qdrantClient: QdrantClient | null = null;
 
-function getClient(): ChromaClient {
-  if (!chromaClient) {
-    chromaClient = new ChromaClient({ path: config.CHROMA_URL });
+function getClient(): QdrantClient {
+  if (!qdrantClient) {
+    qdrantClient = new QdrantClient({
+      url: config.QDRANT_URL,
+      apiKey: config.QDRANT_API_KEY,
+    });
   }
-  return chromaClient;
+  return qdrantClient;
+}
+
+// ─── Ensure collection exists ─────────────────────────────────────────────────
+
+async function ensureCollection(client: QdrantClient): Promise<void> {
+  try {
+    await client.getCollection(config.QDRANT_COLLECTION);
+  } catch {
+    // Collection doesn't exist — create it (768 dims for text-embedding-004)
+    await client.createCollection(config.QDRANT_COLLECTION, {
+      vectors: { size: 768, distance: 'Cosine' },
+    });
+  }
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -28,40 +44,34 @@ function getClient(): ChromaClient {
  */
 export async function retrieve(query: string, topK = 4): Promise<RetrievedChunk[]> {
   try {
-    const embedder = new OllamaEmbeddings({
-      baseUrl: config.OLLAMA_BASE_URL,
-      model: config.EMBED_MODEL,
+    const embedder = new GoogleGenerativeAIEmbeddings({
+      apiKey: config.GEMINI_API_KEY,
+      model: 'text-embedding-004',
     });
 
     const [queryEmbedding] = await embedder.embedDocuments([query]);
 
     const client = getClient();
-    const collection = await client.getOrCreateCollection({
-      name: config.COLLECTION_NAME,
-      metadata: { 'hnsw:space': 'cosine' },
-    });
+    await ensureCollection(client);
 
-    const count = await collection.count();
+    const collectionInfo = await client.getCollection(config.QDRANT_COLLECTION);
+    const count = collectionInfo.points_count ?? 0;
     if (count === 0) return [];
 
-    const results = await collection.query({
-      queryEmbeddings: [queryEmbedding],
-      nResults: Math.min(topK, count),
-      include: ['documents', 'metadatas', 'distances'] as never,
+    const results = await client.search(config.QDRANT_COLLECTION, {
+      vector: queryEmbedding,
+      limit: Math.min(topK, count),
+      with_payload: true,
     });
 
-    const docs = results.documents[0] ?? [];
-    const metas = results.metadatas[0] ?? [];
-    const distances = results.distances?.[0] ?? [];
-
-    return docs.map((doc, i) => ({
-      content: doc ?? '',
-      source: (metas[i]?.['source'] as string | undefined) ?? 'unknown',
-      // ChromaDB cosine distance: 0=identical, 2=opposite → convert to similarity score
-      score: 1 - (distances[i] ?? 1),
-      chunkIndex: (metas[i]?.['chunkIndex'] as number | undefined) ?? 0,
+    return results.map((hit) => ({
+      content: (hit.payload?.['content'] as string | undefined) ?? '',
+      source: (hit.payload?.['source'] as string | undefined) ?? 'unknown',
+      score: hit.score,
+      chunkIndex: (hit.payload?.['chunk_index'] as number | undefined) ?? 0,
     }));
-  } catch {
+  } catch (err) {
+    console.error('Retrieval error:', err);
     return [];
   }
 }
@@ -70,7 +80,7 @@ export async function retrieve(query: string, topK = 4): Promise<RetrievedChunk[
  * Reset the client singleton (call after ingesting new documents).
  */
 export function resetVectorStore(): void {
-  chromaClient = null;
+  qdrantClient = null;
 }
 
 /**
@@ -79,11 +89,10 @@ export function resetVectorStore(): void {
 export async function clearCollection(): Promise<void> {
   try {
     const client = getClient();
-    await client.deleteCollection({ name: config.COLLECTION_NAME });
+    await client.deleteCollection(config.QDRANT_COLLECTION);
     // Recreate empty collection
-    await client.createCollection({
-      name: config.COLLECTION_NAME,
-      metadata: { 'hnsw:space': 'cosine' },
+    await client.createCollection(config.QDRANT_COLLECTION, {
+      vectors: { size: 768, distance: 'Cosine' },
     });
   } catch {
     // Collection may not exist — that's fine
@@ -97,13 +106,10 @@ export async function clearCollection(): Promise<void> {
 export async function getCollectionInfo(): Promise<{ count: number; name: string }> {
   try {
     const client = getClient();
-    const collection = await client.getOrCreateCollection({
-      name: config.COLLECTION_NAME,
-      metadata: { 'hnsw:space': 'cosine' },
-    });
-    const count = await collection.count();
-    return { count, name: config.COLLECTION_NAME };
+    await ensureCollection(client);
+    const info = await client.getCollection(config.QDRANT_COLLECTION);
+    return { count: info.points_count ?? 0, name: config.QDRANT_COLLECTION };
   } catch {
-    return { count: 0, name: config.COLLECTION_NAME };
+    return { count: 0, name: config.QDRANT_COLLECTION };
   }
 }

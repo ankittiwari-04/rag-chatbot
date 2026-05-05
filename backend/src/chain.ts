@@ -1,4 +1,4 @@
-import { Ollama } from '@langchain/ollama';
+import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { retrieve, RetrievedChunk } from './retriever';
 import { historyManager } from './history';
 import { config } from './config';
@@ -95,23 +95,31 @@ export async function askQuestion(
   // 3. Load session history
   const history = historyManager.getHistory(sessionId);
 
-  // 3. Build prompt
+  // 4. Build prompt
   const prompt = buildPrompt(question, chunks, history);
 
-  // 4. Call Ollama LLM
-  const llm = new Ollama({
-    baseUrl: config.OLLAMA_BASE_URL,
-    model: config.LLM_MODEL,
+  // 5. Call Gemini 1.5 Flash LLM
+  const llm = new ChatGoogleGenerativeAI({
+    apiKey: config.GEMINI_API_KEY,
+    model: 'gemini-1.5-flash',
     temperature: 0.2,
   });
 
-  const answer = await llm.invoke(prompt);
+  const response = await llm.invoke(prompt);
+  const answer =
+    typeof response.content === 'string'
+      ? response.content
+      : Array.isArray(response.content)
+        ? response.content
+            .map((c) => (typeof c === 'string' ? c : 'text' in c ? c.text : ''))
+            .join('')
+        : String(response.content);
 
-  // 5. Persist to history
+  // 6. Persist to history
   historyManager.addMessage(sessionId, 'user', question);
   historyManager.addMessage(sessionId, 'assistant', answer);
 
-  // 6. Shape sources for the response
+  // 7. Shape sources for the response
   const sources: ChatSource[] = chunks.map((chunk) => ({
     file: chunk.source,
     score: chunk.score,
