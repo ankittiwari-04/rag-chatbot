@@ -11,6 +11,37 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
 const DEMO_DOCS_KEY = 'rag_demo_documents';
 const DEMO_HISTORY_PREFIX = 'rag_demo_history_';
 const BACKEND_PROBE_TTL_MS = 30_000;
+const SEARCH_STOP_WORDS = new Set([
+  'about',
+  'according',
+  'answer',
+  'asked',
+  'based',
+  'document',
+  'documents',
+  'file',
+  'from',
+  'give',
+  'inside',
+  'kind',
+  'only',
+  'pdf',
+  'please',
+  'question',
+  'show',
+  'should',
+  'tell',
+  'that',
+  'this',
+  'uploaded',
+  'using',
+  'what',
+  'when',
+  'where',
+  'which',
+  'with',
+  'written',
+]);
 
 let backendProbe: { ok: boolean; checkedAt: number } | null = null;
 
@@ -60,9 +91,13 @@ function shouldFallback(error: unknown): boolean {
   return (
     message.includes('network') ||
     message.includes('404') ||
+    message.includes('500') ||
+    message.includes('503') ||
     message.includes('timeout') ||
     message.includes('failed') ||
-    message.includes('not found')
+    message.includes('not found') ||
+    message.includes('api key') ||
+    message.includes('unavailable')
   );
 }
 
@@ -117,12 +152,34 @@ function writeDemoHistory(sessionId: string, messages: Message[]): void {
   }
 }
 
+function recordDemoExchange(sessionId: string, question: string, response: ChatResponse): void {
+  const history = readDemoHistory(sessionId);
+
+  writeDemoHistory(sessionId, [
+    ...history,
+    {
+      id: randomId(),
+      role: 'user',
+      content: question,
+      timestamp: new Date(),
+    },
+    {
+      id: randomId(),
+      role: 'assistant',
+      content: response.answer,
+      sources: response.sources,
+      latencyMs: response.latencyMs,
+      timestamp: new Date(),
+    },
+  ]);
+}
+
 function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
-    .filter((word) => word.length > 2);
+    .filter((word) => word.length > 2 && !SEARCH_STOP_WORDS.has(word));
 }
 
 function sentenceSplit(content: string): string[] {
@@ -287,10 +344,10 @@ function createCareerAdvice(docs: DemoDocument[], ranked: RankedContext[]): stri
     });
   }
 
-  if (hasAny(fullText, ['rag', 'langchain', 'vector', 'embedding', 'qdrant', 'chromadb', 'ollama', 'gemini'])) {
+  if (hasAny(fullText, ['rag', 'langchain', 'vector', 'embedding', 'qdrant', 'chromadb', 'gemini', 'openai', 'anthropic', 'groq'])) {
     roles.push({
       title: 'AI Application Developer / RAG Chatbot Developer',
-      reason: 'the document mentions RAG pipelines, vector embeddings, LangChain, Gemini/Ollama, or vector databases.',
+      reason: 'the document mentions RAG pipelines, vector embeddings, LangChain, cloud LLM APIs, or vector databases.',
     });
   }
 
@@ -333,8 +390,17 @@ function createCareerAdvice(docs: DemoDocument[], ranked: RankedContext[]): stri
 
 function createIntroAnswer(docs: DemoDocument[], ranked: RankedContext[]): string {
   const fullText = docs.map((doc) => doc.content).join(' ');
-  const nameMatch = fullText.match(/\b(?:Name:\s*)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/);
-  const name = nameMatch?.[1] ?? 'This candidate';
+  const lines = docs.flatMap((doc) =>
+    doc.content
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+  const uppercaseName = lines
+    .map((line) => line.match(/^([A-Z]{2,}(?:\s+[A-Z]{2,}){1,2})$/)?.[1])
+    .find(Boolean);
+  const titleCaseName = fullText.match(/\b(?:Name:\s*)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/)?.[1];
+  const name = uppercaseName ?? titleCaseName ?? 'This candidate';
   const evidence = ranked
     .slice(0, 4)
     .map((item) => item.chunk)
@@ -528,25 +594,7 @@ async function askDocumentApi(
 async function demoSendMessage(question: string, sessionId: string): Promise<ChatResponse> {
   const docs = readDocs().filter((doc) => doc.content.trim().length > 0);
   const response = (await askDocumentApi(question, sessionId, docs)) ?? createDemoAnswer(question, sessionId);
-  const history = readDemoHistory(sessionId);
-
-  writeDemoHistory(sessionId, [
-    ...history,
-    {
-      id: randomId(),
-      role: 'user',
-      content: question,
-      timestamp: new Date(),
-    },
-    {
-      id: randomId(),
-      role: 'assistant',
-      content: response.answer,
-      sources: response.sources,
-      latencyMs: response.latencyMs,
-      timestamp: new Date(),
-    },
-  ]);
+  recordDemoExchange(sessionId, question, response);
 
   return response;
 }
@@ -564,7 +612,7 @@ async function demoUploadFiles(files: File[]): Promise<UploadResponse> {
   writeDocs(docs);
 
   return {
-    message: `Stored ${docs.length} file(s) in browser demo mode.`,
+    message: `Stored ${docs.length} file(s) for cloud document chat.`,
     stats: {
       filesProcessed: docs.length,
       chunksCreated: docs.reduce((sum, doc) => sum + Math.max(1, chunkText(doc.content).length), 0),
@@ -577,6 +625,9 @@ export async function sendMessage(
   question: string,
   sessionId: string,
 ): Promise<ChatResponse> {
+  const localDocs = readDocs().filter((doc) => doc.content.trim().length > 0);
+  if (localDocs.length > 0) return demoSendMessage(question, sessionId);
+
   if (!(await isBackendAvailable())) return demoSendMessage(question, sessionId);
 
   try {
@@ -595,8 +646,13 @@ export async function uploadFiles(
   files: File[],
   onProgress?: (percent: number) => void,
 ): Promise<UploadResponse> {
+  const localUploadPromise = demoUploadFiles(files).catch(() => null);
+
   if (!(await isBackendAvailable())) {
-    const response = await demoUploadFiles(files);
+    const response = await localUploadPromise;
+    if (!response) {
+      throw new Error('Could not extract readable text from the uploaded file.');
+    }
     onProgress?.(100);
     return response;
   }
@@ -617,16 +673,22 @@ export async function uploadFiles(
         },
       },
     );
+    await localUploadPromise;
+    onProgress?.(100);
     return data.data;
   } catch (error) {
     if (!shouldFallback(error)) throw error;
-    const response = await demoUploadFiles(files);
+    const response = await localUploadPromise;
+    if (!response) throw error;
     onProgress?.(100);
     return response;
   }
 }
 
 export async function getHistory(sessionId: string): Promise<Message[]> {
+  const localHistory = readDemoHistory(sessionId);
+  if (localHistory.length > 0) return localHistory;
+
   if (!(await isBackendAvailable())) return readDemoHistory(sessionId);
 
   try {
@@ -693,6 +755,9 @@ export async function getHealth(): Promise<HealthResponse> {
 }
 
 export async function getCollectionStatus(): Promise<{ count: number; name: string }> {
+  const localDocs = readDocs();
+  if (localDocs.length > 0) return { count: localDocs.length, name: 'browser-cloud-chat' };
+
   if (!(await isBackendAvailable())) return { count: readDocs().length, name: 'browser-demo' };
 
   try {

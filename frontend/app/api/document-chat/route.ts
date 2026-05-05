@@ -8,6 +8,38 @@ interface DocumentContext {
   content: string;
 }
 
+const SEARCH_STOP_WORDS = new Set([
+  'about',
+  'according',
+  'answer',
+  'asked',
+  'based',
+  'document',
+  'documents',
+  'file',
+  'from',
+  'give',
+  'inside',
+  'kind',
+  'only',
+  'pdf',
+  'please',
+  'question',
+  'show',
+  'should',
+  'tell',
+  'that',
+  'this',
+  'uploaded',
+  'using',
+  'what',
+  'when',
+  'where',
+  'which',
+  'with',
+  'written',
+]);
+
 function chunkText(content: string, size = 1800): string[] {
   const clean = content.replace(/\s+/g, ' ').trim();
   if (!clean) return [];
@@ -24,7 +56,7 @@ function tokenize(text: string): string[] {
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
-    .filter((word) => word.length > 2);
+    .filter((word) => word.length > 2 && !SEARCH_STOP_WORDS.has(word));
 }
 
 function rankContexts(question: string, documents: DocumentContext[]) {
@@ -62,10 +94,12 @@ function rankContexts(question: string, documents: DocumentContext[]) {
 
 export async function POST(request: NextRequest) {
   try {
-    const apiKey = process.env['GEMINI_API_KEY'];
+    const apiKey = process.env['GEMINI_API_KEY'] ?? process.env['GOOGLE_API_KEY'];
+    const modelName = process.env['GEMINI_MODEL'] ?? 'gemini-1.5-flash';
+
     if (!apiKey) {
       return NextResponse.json(
-        { success: false, error: 'GEMINI_API_KEY is not configured.' },
+        { success: false, error: 'Cloud Gemini API key is not configured.' },
         { status: 503 },
       );
     }
@@ -125,7 +159,7 @@ User question: ${question}`;
 
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: modelName,
       generationConfig: {
         temperature: 0.2,
         maxOutputTokens: 900,

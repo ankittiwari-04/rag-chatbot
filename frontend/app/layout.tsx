@@ -4,12 +4,12 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'RAG Chatbot | AI Knowledge Assistant',
   description:
-    'A production-ready Retrieval-Augmented Generation chatbot. Upload your documents and ask questions powered by local AI.',
-  keywords: ['RAG', 'AI', 'chatbot', 'knowledge base', 'LLM', 'Ollama', 'ChromaDB'],
+    'A production-ready Retrieval-Augmented Generation chatbot. Upload your documents and ask questions powered by a cloud LLM API.',
+  keywords: ['RAG', 'AI', 'chatbot', 'knowledge base', 'LLM', 'Gemini', 'Qdrant', 'cloud API'],
   authors: [{ name: 'KnowledgeAI' }],
   openGraph: {
     title: 'RAG Chatbot | AI Knowledge Assistant',
-    description: 'Ask questions about your documents using local AI.',
+    description: 'Ask questions about your documents using a cloud LLM API.',
     type: 'website',
     locale: 'en_US',
   },
